@@ -70,7 +70,9 @@ The function should stay stable across worker reconnects and across multiple wor
 
 ## `function_versions`
 
-Function configuration should be versioned by hashing the serialized configuration object. That object is the same logical payload described in the protocol:
+Function configuration should be versioned by hashing the canonical serialized configuration object. The version should represent the full executable contract that affects dispatch and semantics, not just the callable signature.
+
+That object is the same logical payload described in the protocol:
 
 ```json
 {
@@ -90,7 +92,26 @@ Suggested fields:
 - `config_json`
 - `created_at`
 
+Versioning rule:
+
+- canonicalize the function configuration JSON
+- hash the canonical JSON, for example with SHA-256
+- store both the hash and the config JSON
+
+The worker SDK should compute the version hash locally and send it with `create_function`. The server should be allowed to recompute and verify the hash before storing the version.
+
 This gives Spindle a durable record of what configuration was active when a run was created, without inventing separate tables for every policy subtype on day one.
+
+The version basis should include:
+
+- `id`
+- `label`
+- `triggers`
+- `concurrency`
+- `rate_limit`
+- `retries`
+
+The version basis should not depend only on language-specific callable signature reflection. Signature metadata can be included as optional descriptive metadata later, but it should not be the primary version source because it is inconsistent across languages and does not capture dispatch policy.
 
 ## `runs`
 
@@ -131,6 +152,23 @@ Suggested fields:
 - `payload_json`
 - `created_at`
 
+The recommended v1 shape is a small typed header plus a JSON payload:
+
+- fixed columns for ordering and queryable mechanics
+- flexible `payload_json` for chunk-specific data
+
+Conceptually, a chunk looks like:
+
+```json
+{
+  "chunk_type": "progress",
+  "payload": {
+    "message": "processing item 42",
+    "percent": 50
+  }
+}
+```
+
 Every meaningful transition should append a new chunk rather than mutate a row in place. Expected chunk types include:
 
 - `created`
@@ -144,6 +182,15 @@ Every meaningful transition should append a new chunk rather than mutate a row i
 - `failed`
 
 Derived current state can still be cached on `runs.status` for fast dispatch and queries, but the source of truth should be append-only chunks.
+
+This keeps the model flexible:
+
+- `progress` can carry arbitrary progress metadata
+- `output` can carry return values or RPC results
+- `failed` can carry error details
+- `deferred` and `retry_scheduled` can carry scheduling hints
+
+Fields should only be promoted out of `payload_json` into first-class columns when the server needs to query them frequently for dispatch or recovery.
 
 ## `worker_sessions` And `leases`
 

@@ -124,7 +124,8 @@ At the protocol level, `create_function` should carry one JSON object that descr
   "triggers": [],
   "concurrency": [],
   "rate_limit": [],
-  "retries": {}
+  "retries": {},
+  "version": "sha256:..."
 }
 ```
 
@@ -136,8 +137,17 @@ The fields are:
 - `concurrency`: a list of concurrency policies
 - `rate_limit`: a list of rate-limit policies
 - `retries`: retry behavior for the function
+- `version`: a hash of the canonical function configuration JSON
 
 The server should bind that logical function configuration to the authenticated worker session and create a live `FunctionRef` for it. Connection-scoped identity such as worker ownership or reference IDs can be added by the server rather than supplied as user-facing SDK fields.
+
+Versioning should work like this:
+
+- the SDK canonicalizes the function configuration JSON
+- the SDK hashes that canonical JSON and sends the resulting `version`
+- the server may recompute the hash and verify it before accepting the function version
+
+The version should represent the full function configuration, not just the callable signature. Signature metadata alone is too language-specific and too narrow to capture trigger bindings, concurrency policy, rate limits, and retries.
 
 The callable itself never crosses the protocol. Spindle coordinates and dispatches work; the client SDK owns local execution of the callable and reporting of resulting state.
 
@@ -218,6 +228,11 @@ Suggested mapping:
 The internal `events` package should represent facts in the server loop and event log. The `commands` package should represent frames crossing the websocket.
 
 When a command requires durable coordination, the server should materialize it as a `Run` with append-only chunks rather than creating a separate persistence model for RPC, queue work, or workflow execution.
+
+Those chunks should be stored as:
+
+- a small fixed header for run identity, position, and chunk type
+- a flexible JSON payload for chunk-specific data
 
 ## Execution Flow
 

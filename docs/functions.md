@@ -15,7 +15,8 @@ Each function registration should capture one JSON-serializable configuration ob
   "triggers": [],
   "concurrency": [],
   "rate_limit": [],
-  "retries": {}
+  "retries": {},
+  "version": "sha256:..."
 }
 ```
 
@@ -27,8 +28,11 @@ The core fields are:
 - `concurrency`: the configured concurrency rules
 - `rate_limit`: the configured rate-limit rules
 - `retries`: retry behavior and policy
+- `version`: a hash of the canonicalized function configuration JSON
 
 The callable implementation is local to the SDK host and does not exist inside the Spindle server. Worker ownership and `FunctionRef` identity are live runtime facts added by the server when the function is created on a connected worker.
+
+The version should be computed from the canonical function configuration, not just from the function signature. That keeps versioning stable across Python, Go, TypeScript, and Rust SDKs and ensures that changes to trigger bindings or execution policy produce a new version.
 
 ## Logical Function Versus Function Reference
 
@@ -107,6 +111,7 @@ The exact SDK naming may change, but the model should stay consistent:
 
 - the SDK may provide ergonomic wrappers such as `Queue(...)` or `Http(...)`
 - the worker still sends one normalized function configuration object
+- the SDK should compute a canonical config hash and send it as the function version
 - the trigger or ingress description is metadata on the function or on emitted events
 - the server should not need separate registration lifecycles for queue functions versus HTTP functions
 - event ingress should use simple verbs such as `send(...)` and `rpc(...)`
