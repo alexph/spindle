@@ -229,7 +229,7 @@ This is intentionally minimal. The durable model only needs the event name and a
 
 ## `worker_sessions` And `leases`
 
-Worker connectivity should be modeled as leased liveness, not durable business state.
+Worker connectivity should be modeled as connection-derived liveness in v1, not as a full independent lease protocol.
 
 `worker_sessions` should capture:
 
@@ -239,14 +239,14 @@ Worker connectivity should be modeled as leased liveness, not durable business s
 - `disconnected_at`
 - `last_seen_at`
 
-`leases` should capture the active validity window for dispatch decisions:
+If a `leases` table exists in v1, it should remain an implementation detail derived from connection state rather than a separately negotiated protocol. It may capture the active validity window for dispatch decisions:
 
 - `holder_type`
 - `holder_id`
 - `lease_key`
 - `expires_at`
 
-This allows the dispatcher to treat worker presence and function ownership as expiring facts. On reconnect, the worker recreates its live registrations and leases. On expiry, the server cleans up stale ownership and re-evaluates in-flight work.
+This allows the dispatcher to treat worker presence and function ownership as expiring facts. On reconnect, the worker recreates its live registrations. On disconnect or heartbeat failure, the server cleans up stale ownership and re-evaluates in-flight work.
 
 ## Must Be Durable
 
@@ -279,15 +279,15 @@ On restart or failover, the server should be able to:
 - rebuild current run state from durable run chunks
 - determine which runs were incomplete at the time of failure
 - restore scheduled, deferred, or retriable work that should still occur
-- treat all worker sessions as non-live until new leases are established
-- remove stale `FunctionRef` ownership that depended on expired sessions or leases
+- treat all worker sessions as non-live until workers reconnect
+- remove stale `FunctionRef` ownership that depended on lost sessions or derived leases
 - continue to serve idempotent replays without duplicating durable work
 
 The system should favor replay or reconstruction from durable records over ad hoc repair logic.
 
 ## Worker Presence And Leases
 
-Worker presence is important for dispatch, but it should not be treated as a durable business fact. A worker session should be modeled as leased liveness:
+Worker presence is important for dispatch, but it should not be treated as a durable business fact. In v1, a worker session should be modeled as connection-derived liveness:
 
 - active while the websocket is connected and heartbeats or connection state remain valid
 - expired after disconnect or lease timeout
@@ -295,10 +295,10 @@ Worker presence is important for dispatch, but it should not be treated as a dur
 
 This keeps durable coordination focused on executions and events rather than ephemeral network sessions.
 
-The lease model should be simple:
+The v1 liveness model should be simple:
 
-- dispatch only considers worker-owned `FunctionRef`s backed by an active lease
-- disconnect or lease expiry invalidates those placements
+- dispatch only considers worker-owned `FunctionRef`s backed by a live connection
+- disconnect or heartbeat failure invalidates those placements
 - the durable function definition remains, but the live placement disappears until re-registration
 
 ## RPC Result Delivery
@@ -328,7 +328,7 @@ This avoids overfitting queues, RPC, and workflows to a stream-consumer model th
 
 Disconnect and restart handling must converge safely:
 
-- stale worker sessions lose their active leases and `FunctionRef` ownership
+- stale worker sessions lose their `FunctionRef` ownership
 - logical `Function` identities and version records remain if other workers still advertise them
 - in-flight runs assigned to a lost worker are re-evaluated under retry, defer, or failure policy
 - pending runs must not be lost simply because the chosen worker disappeared

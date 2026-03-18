@@ -66,7 +66,9 @@ The protocol should not require a separate envelope object beyond this discrimin
 4. The worker registers one or more `Function` definitions, creating worker-owned `FunctionRef` records.
 5. The server dispatches eligible executions to matching workers over the same connection.
 6. The worker reports execution progress and terminal outcomes back as protocol events or command responses.
-7. If the worker disconnects, the server expires its presence lease, removes stale `FunctionRef` ownership, and re-evaluates any affected in-flight executions.
+7. If the worker disconnects, the server removes stale `FunctionRef` ownership and re-evaluates any affected in-flight executions.
+
+For v1, `FunctionRef` liveness should be connection-derived. The server can rely on websocket/framework heartbeat and disconnect detection rather than a separate lease renewal message.
 
 ## Message Categories
 
@@ -130,6 +132,16 @@ The exact message may later carry worker metadata, protocol version, or capabili
 - send `hello`
 - wait for acceptance
 - only then send `create_function`, `send`, or `rpc`
+
+## Reader-Driven Consumption
+
+Workers should consume protocol traffic through a reader over the websocket connection. That means the worker runtime should conceptually:
+
+- read commands from the socket
+- hand execution requests to the local executor
+- write execution updates back to the socket
+
+This keeps the worker runtime aligned with the rest of the stream-oriented design.
 
 ## Function Shape
 
@@ -287,7 +299,7 @@ The core dispatch loop should look like this:
 
 1. A capability adapter, worker-originated `send` or `rpc`, or workflow transition produces an internal event.
 2. The dispatcher resolves that event to one or more eligible `Function` targets and creates or updates a durable `Run` when required.
-3. The dispatcher selects an available `FunctionRef` while enforcing concurrency, rate limits, and active worker leases.
+3. The dispatcher selects an available `FunctionRef` while enforcing concurrency, rate limits, and live connection-derived worker availability.
 4. The server sends `execution_request` to the chosen worker connection.
 5. The worker responds with an initial acceptance state such as `ack`, `nack`, or a richer execution update.
 6. The worker emits follow-up `execution_update` messages as execution progresses.
@@ -323,10 +335,12 @@ The exact final taxonomy can be refined later, but the protocol should clearly s
 
 Workers are expected to connect and disconnect over time. The protocol must support scale-up and scale-down without manual cleanup:
 
-- A disconnected worker loses ownership of its live `FunctionRef` records after lease expiry or explicit disconnect handling.
+- A disconnected worker immediately loses ownership of its live `FunctionRef` records.
 - The server must remove stale worker-scoped registrations without deleting the underlying logical `Function` identity if other workers still advertise it.
 - In-flight executions assigned to a disconnected worker must be re-evaluated according to durability and retry policy.
 - The worker registry and function registry must remain consistent when multiple workers advertise the same function ID.
+
+In v1, the server may have to drop delivery when no eligible connected worker is available. That limitation should be explicit.
 
 ## Open Items
 
