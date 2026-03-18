@@ -16,6 +16,7 @@ The implementation should keep the transport simple. Protocol messages should us
 - `Command`: an instruction sent over the websocket that asks the peer to perform or acknowledge an action.
 - `Event`: a reported fact or state transition sent over the websocket or recorded internally.
 - `Execution`: a single dispatch instance for a function or workflow step.
+- `Run`: the durable unit created when an event, RPC, workflow instance, or scheduled action needs durable coordination.
 - `FunctionRef`: the binding between a connected worker session and a registered function definition.
 
 ## Naming Layers
@@ -169,7 +170,7 @@ A sent event should carry:
 - `payload`: the event body
 - `idempotency_id`: an optional caller-supplied idempotency key for deduplication and safe retries
 
-The server may enrich the resulting internal event with server-generated fields such as event identity, source metadata, timestamps, and routing hints.
+The server may enrich the resulting internal event with server-generated fields such as event identity, source metadata, timestamps, routing hints, and a linked run identity when durable coordination is needed.
 
 ## `rpc` Shape
 
@@ -194,6 +195,13 @@ An RPC command should carry:
 
 The server should attach correlation data internally so the SDK can resolve the waiting promise or future when the result arrives.
 
+RPC should still enter the same durable model:
+
+- the inbound request may create a `Run`
+- execution progress and outputs append durable chunks
+- the final result can be rebroadcast to the waiting connection if it is still present
+- the durable run history remains the source of truth if the caller disconnects
+
 ## Commands Versus Internal Events
 
 Wire commands and internal events should not be the same package or the same type, even when their names are similar.
@@ -209,17 +217,19 @@ Suggested mapping:
 
 The internal `events` package should represent facts in the server loop and event log. The `commands` package should represent frames crossing the websocket.
 
+When a command requires durable coordination, the server should materialize it as a `Run` with append-only chunks rather than creating a separate persistence model for RPC, queue work, or workflow execution.
+
 ## Execution Flow
 
 The core dispatch loop should look like this:
 
 1. A capability adapter, worker-originated `send` or `rpc`, or workflow transition produces an internal event.
-2. The dispatcher resolves that event to one or more eligible `Function` targets.
-3. The dispatcher selects an available `FunctionRef` while enforcing concurrency and rate limits.
+2. The dispatcher resolves that event to one or more eligible `Function` targets and creates or updates a durable `Run` when required.
+3. The dispatcher selects an available `FunctionRef` while enforcing concurrency, rate limits, and active worker leases.
 4. The server sends `execution_request` to the chosen worker connection.
 5. The worker responds with an initial acceptance state such as `ack`, `nack`, or a richer execution update.
 6. The worker emits follow-up `execution_update` messages as execution progresses.
-7. The server records each update and decides whether to complete, retry, defer, fail, or reschedule the execution.
+7. The server records each update as durable run chunks and decides whether to complete, retry, defer, fail, or reschedule the execution.
 
 ## Execution State Vocabulary
 
