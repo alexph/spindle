@@ -98,6 +98,18 @@ Versioning rule:
 - hash the canonical JSON, for example with SHA-256
 - store both the hash and the config JSON
 
+Canonicalization should follow one deterministic v1 rule:
+
+- include only versioned config fields: `id`, `label`, `triggers`, `concurrency`, `rate_limit`, and `retries`
+- exclude derived or transport-only fields such as `version`, worker identity, connection state, or callable metadata
+- serialize as JSON with object keys sorted lexicographically
+- preserve array order exactly as provided
+- omit fields only when they are truly absent; if a field is conceptually present but empty, use the agreed empty JSON value such as `[]` or `{}`
+- encode strings exactly as UTF-8 JSON strings
+- do not pretty-print or include insignificant whitespace
+
+This should be specified tightly enough that all SDKs can generate the same bytes before hashing.
+
 The worker SDK should compute the version hash locally and send it with `create_function`. The server should be allowed to recompute and verify the hash before storing the version.
 
 This gives Spindle a durable record of what configuration was active when a run was created, without inventing separate tables for every policy subtype on day one.

@@ -34,6 +34,16 @@ The callable implementation is local to the SDK host and does not exist inside t
 
 The version should be computed from the canonical function configuration, not just from the function signature. That keeps versioning stable across Python, Go, TypeScript, and Rust SDKs and ensures that changes to trigger bindings or execution policy produce a new version.
 
+The canonicalization rule should be explicit:
+
+- hash only `id`, `label`, `triggers`, `concurrency`, `rate_limit`, and `retries`
+- do not hash `version` itself or any worker-specific metadata
+- sort JSON object keys lexicographically
+- preserve list order
+- use compact JSON encoding with no insignificant whitespace
+
+That gives every SDK a deterministic version hash without relying on language reflection.
+
 ## Logical Function Versus Function Reference
 
 The design should consistently separate:

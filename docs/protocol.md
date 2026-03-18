@@ -147,6 +147,16 @@ Versioning should work like this:
 - the SDK hashes that canonical JSON and sends the resulting `version`
 - the server may recompute the hash and verify it before accepting the function version
 
+Canonicalization should use the same v1 rule across every SDK:
+
+- include only `id`, `label`, `triggers`, `concurrency`, `rate_limit`, and `retries`
+- exclude `version` itself and any worker- or transport-specific metadata
+- sort object keys lexicographically
+- preserve array order
+- emit compact JSON without insignificant whitespace
+
+This keeps the version deterministic across Python, Go, TypeScript, and Rust.
+
 The version should represent the full function configuration, not just the callable signature. Signature metadata alone is too language-specific and too narrow to capture trigger bindings, concurrency policy, rate limits, and retries.
 
 The callable itself never crosses the protocol. Spindle coordinates and dispatches work; the client SDK owns local execution of the callable and reporting of resulting state.
