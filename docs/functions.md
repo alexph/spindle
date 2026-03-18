@@ -22,7 +22,7 @@ Each function registration should capture one JSON-serializable configuration ob
     { "kind": "time", "limit": 10, "period": "second" }
   ],
   "retries": [
-    { "kind": "time", "limit": 3, "period": "second" }
+    { "kind": "simple", "max_attempts": 3, "delay": "5s" }
   ],
   "version": "sha256:..."
 }
@@ -42,8 +42,8 @@ For v1, the policy shapes should be:
 
 - `triggers`: an array of `{ "kind": "event", "name": string }`
 - `concurrency`: an array of `{ "kind": "limit", "limit": int }`
-- `rate_limit`: an array of `{ "kind": "time", "limit": int, "period": enum }`
-- `retries`: an array of retry-policy objects, following the same list-based pattern as rate limits so future keyed or field-scoped retry rules can be added without changing the top-level shape
+- `rate_limit`: an array of `{ "kind": "time", "limit": int, "period": enum }`, where `period` is one of `second`, `minute`, `hour`, or `day`
+- `retries`: an array of retry-policy objects. For v1 the supported shape should be `{ "kind": "simple", "max_attempts": int, "delay": duration }`
 
 The `kind` field may feel redundant in v1, but it keeps the structure extensible for later field-based or keyed variants.
 
@@ -108,7 +108,7 @@ spindle.register_function(
         triggers=[spindle.queue("emails")],
         concurrency=[spindle.Concurrency(limit=1)],
         rate_limit=[spindle.RateLimit(limit=10, period="second")],
-        retries=[spindle.Retry(limit=3, period="second")],
+        retries=[spindle.Retry(max_attempts=3, delay="5s")],
     )
 )
 

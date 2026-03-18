@@ -53,13 +53,33 @@ For v1, `rate_limit` should be configured as an array of objects shaped like:
 ]
 ```
 
-`period` should be treated as an enum. The exact enum set can remain small in v1, but the shape should leave room for future field-based rate-limit variants.
+`period` should be treated as an enum with these v1 values:
+
+- `second`
+- `minute`
+- `hour`
+- `day`
+
+The shape should still leave room for future field-based rate-limit variants.
 
 ## Retries
 
 Retries should follow the same list-based design as rate limits so the policy shape can grow without a wire break.
 
-For v1, `retries` should be an array of retry-policy objects rather than a single map or scalar. The exact retry object can remain narrow initially, but it should be designed to support future scoped or strategy-specific variants.
+For v1, `retries` should be an array of retry-policy objects shaped like:
+
+```json
+[
+  { "kind": "simple", "max_attempts": 3, "delay": "5s" }
+]
+```
+
+This keeps retries semantically separate from rate limits:
+
+- rate limits describe work per time window
+- retries describe retry strategy after failure
+
+Future variants such as backoff should be added as new `kind` values rather than overloading the v1 shape.
 
 Rate limits should be evaluated centrally by the server before dispatch. Worker SDKs may expose local backpressure signals, but those do not replace server-side enforcement.
 

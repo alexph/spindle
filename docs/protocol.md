@@ -131,7 +131,7 @@ At the protocol level, `create_function` should carry one JSON object that descr
     { "kind": "time", "limit": 10, "period": "second" }
   ],
   "retries": [
-    { "kind": "time", "limit": 3, "period": "second" }
+    { "kind": "simple", "max_attempts": 3, "delay": "5s" }
   ],
   "version": "sha256:..."
 }
@@ -151,10 +151,10 @@ For v1, those list items should be shaped as:
 
 - trigger: `{ "kind": "event", "name": string }`
 - concurrency policy: `{ "kind": "limit", "limit": int }`
-- rate-limit policy: `{ "kind": "time", "limit": int, "period": enum }`
-- retry policy: an array-based policy shape following the same pattern as rate limits so future variants can be added without changing the container type
+- rate-limit policy: `{ "kind": "time", "limit": int, "period": enum }`, where `period` is one of `second`, `minute`, `hour`, or `day`
+- retry policy: for v1, `{ "kind": "simple", "max_attempts": int, "delay": duration }`
 
-The list-of-objects pattern is intentional. Even where v1 has only one practical variant, `kind` keeps room for keyed, field-based, or scoped policy variants later.
+The list-of-objects pattern is intentional. Even where v1 has only one practical variant, `kind` keeps room for keyed, field-based, backoff, or scoped policy variants later.
 
 The server should bind that logical function configuration to the authenticated worker session and create a live `FunctionRef` for it. Connection-scoped identity such as worker ownership or reference IDs can be added by the server rather than supplied as user-facing SDK fields.
 
@@ -261,6 +261,8 @@ Those chunks should be stored as:
 - a small fixed header for run identity, position, and chunk type
 - a flexible JSON payload for chunk-specific data
 
+For v1, `chunk_type` should be the durable event name for the run timeline and `payload_json` should be the serialized snapshot of the semantic update. The storage payload should align closely with the protocol update where practical, but it does not need to be a permanent verbatim copy of the original websocket frame.
+
 ## Execution Flow
 
 The core dispatch loop should look like this:
@@ -272,6 +274,17 @@ The core dispatch loop should look like this:
 5. The worker responds with an initial acceptance state such as `ack`, `nack`, or a richer execution update.
 6. The worker emits follow-up `execution_update` messages as execution progresses.
 7. The server records each update as durable run chunks and decides whether to complete, retry, defer, fail, or reschedule the execution.
+
+The expected mapping is straightforward:
+
+- execution accepted -> `accepted`
+- execution started -> `started`
+- progress update -> `progress`
+- return value or RPC result -> `output`
+- defer response -> `deferred`
+- retry scheduling -> `retry_scheduled`
+- terminal success -> `completed`
+- terminal failure -> `failed`
 
 ## Execution State Vocabulary
 

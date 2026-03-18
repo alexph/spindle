@@ -88,7 +88,7 @@ That object is the same logical payload described in the protocol:
     { "kind": "time", "limit": 10, "period": "second" }
   ],
   "retries": [
-    { "kind": "time", "limit": 3, "period": "second" }
+    { "kind": "simple", "max_attempts": 3, "delay": "5s" }
   ]
 }
 ```
@@ -177,6 +177,13 @@ The recommended v1 shape is a small typed header plus a JSON payload:
 - fixed columns for ordering and queryable mechanics
 - flexible `payload_json` for chunk-specific data
 
+The key rule is:
+
+- `chunk_type` is the durable event name for the run timeline, such as `started`, `progress`, `output`, or `failed`
+- `payload_json` is the serialized snapshot of the semantic update at the time the chunk was appended
+
+Storage should not promise that `payload_json` is a permanent verbatim copy of a websocket frame. It should be close to the protocol payload where useful, but optimized as the durable representation of what happened in the run.
+
 Conceptually, a chunk looks like:
 
 ```json
@@ -211,6 +218,18 @@ This keeps the model flexible:
 - `deferred` and `retry_scheduled` can carry scheduling hints
 
 Fields should only be promoted out of `payload_json` into first-class columns when the server needs to query them frequently for dispatch or recovery.
+
+Suggested v1 payload expectations:
+
+- `created`: the normalized creation snapshot for the run
+- `accepted`: which worker or function reference accepted the work
+- `started`: the start snapshot for local execution
+- `progress`: arbitrary progress metadata
+- `output`: returned values or RPC results
+- `deferred`: delay or defer metadata
+- `retry_scheduled`: retry scheduling metadata
+- `completed`: terminal success metadata
+- `failed`: terminal failure metadata
 
 ## `worker_sessions` And `leases`
 
