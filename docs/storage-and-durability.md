@@ -78,10 +78,18 @@ That object is the same logical payload described in the protocol:
 {
   "id": "email.send",
   "label": "Send email to a user",
-  "triggers": [],
-  "concurrency": [],
-  "rate_limit": [],
-  "retries": {}
+  "triggers": [
+    { "kind": "event", "name": "emails.received" }
+  ],
+  "concurrency": [
+    { "kind": "limit", "limit": 1 }
+  ],
+  "rate_limit": [
+    { "kind": "time", "limit": 10, "period": "second" }
+  ],
+  "retries": [
+    { "kind": "time", "limit": 3, "period": "second" }
+  ]
 }
 ```
 

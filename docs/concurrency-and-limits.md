@@ -8,6 +8,16 @@ Spindle server is the source of truth for coordination limits. Concurrency and r
 
 The minimum required concurrency scope is the logical `Function` ID. If a function is registered by multiple workers, Spindle still enforces the configured concurrency policy across the whole cluster rather than per worker.
 
+For v1, concurrency should be configured as an array of policy objects:
+
+```json
+[
+  { "kind": "limit", "limit": 1 }
+]
+```
+
+The array shape is deliberate even though v1 only needs the `limit` variant. It leaves room for future keyed or field-based concurrency rules without changing the top-level field.
+
 Initial rule:
 
 - if function `email.send` is registered by three worker instances
@@ -34,6 +44,22 @@ The initial design should support rate limits at least at these scopes:
 
 - per queue or event source where ingress must be smoothed
 - per function ID where downstream work must be throttled
+
+For v1, `rate_limit` should be configured as an array of objects shaped like:
+
+```json
+[
+  { "kind": "time", "limit": 10, "period": "second" }
+]
+```
+
+`period` should be treated as an enum. The exact enum set can remain small in v1, but the shape should leave room for future field-based rate-limit variants.
+
+## Retries
+
+Retries should follow the same list-based design as rate limits so the policy shape can grow without a wire break.
+
+For v1, `retries` should be an array of retry-policy objects rather than a single map or scalar. The exact retry object can remain narrow initially, but it should be designed to support future scoped or strategy-specific variants.
 
 Rate limits should be evaluated centrally by the server before dispatch. Worker SDKs may expose local backpressure signals, but those do not replace server-side enforcement.
 

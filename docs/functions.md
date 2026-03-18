@@ -12,10 +12,18 @@ Each function registration should capture one JSON-serializable configuration ob
 {
   "id": "email.send",
   "label": "Send email to a user",
-  "triggers": [],
-  "concurrency": [],
-  "rate_limit": [],
-  "retries": {},
+  "triggers": [
+    { "kind": "event", "name": "emails.received" }
+  ],
+  "concurrency": [
+    { "kind": "limit", "limit": 1 }
+  ],
+  "rate_limit": [
+    { "kind": "time", "limit": 10, "period": "second" }
+  ],
+  "retries": [
+    { "kind": "time", "limit": 3, "period": "second" }
+  ],
   "version": "sha256:..."
 }
 ```
@@ -29,6 +37,15 @@ The core fields are:
 - `rate_limit`: the configured rate-limit rules
 - `retries`: retry behavior and policy
 - `version`: a hash of the canonicalized function configuration JSON
+
+For v1, the policy shapes should be:
+
+- `triggers`: an array of `{ "kind": "event", "name": string }`
+- `concurrency`: an array of `{ "kind": "limit", "limit": int }`
+- `rate_limit`: an array of `{ "kind": "time", "limit": int, "period": enum }`
+- `retries`: an array of retry-policy objects, following the same list-based pattern as rate limits so future keyed or field-scoped retry rules can be added without changing the top-level shape
+
+The `kind` field may feel redundant in v1, but it keeps the structure extensible for later field-based or keyed variants.
 
 The callable implementation is local to the SDK host and does not exist inside the Spindle server. Worker ownership and `FunctionRef` identity are live runtime facts added by the server when the function is created on a connected worker.
 
@@ -90,8 +107,8 @@ spindle.register_function(
         queue="emails",
         triggers=[spindle.queue("emails")],
         concurrency=[spindle.Concurrency(limit=1)],
-        rate_limit=[spindle.RateLimit(key="emails", rate="10/s")],
-        retries=spindle.Retries(max_attempts=3),
+        rate_limit=[spindle.RateLimit(limit=10, period="second")],
+        retries=[spindle.Retry(limit=3, period="second")],
     )
 )
 

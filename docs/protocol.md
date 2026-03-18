@@ -121,10 +121,18 @@ At the protocol level, `create_function` should carry one JSON object that descr
 {
   "id": "email.send",
   "label": "Send email to a user",
-  "triggers": [],
-  "concurrency": [],
-  "rate_limit": [],
-  "retries": {},
+  "triggers": [
+    { "kind": "event", "name": "emails.received" }
+  ],
+  "concurrency": [
+    { "kind": "limit", "limit": 1 }
+  ],
+  "rate_limit": [
+    { "kind": "time", "limit": 10, "period": "second" }
+  ],
+  "retries": [
+    { "kind": "time", "limit": 3, "period": "second" }
+  ],
   "version": "sha256:..."
 }
 ```
@@ -138,6 +146,15 @@ The fields are:
 - `rate_limit`: a list of rate-limit policies
 - `retries`: retry behavior for the function
 - `version`: a hash of the canonical function configuration JSON
+
+For v1, those list items should be shaped as:
+
+- trigger: `{ "kind": "event", "name": string }`
+- concurrency policy: `{ "kind": "limit", "limit": int }`
+- rate-limit policy: `{ "kind": "time", "limit": int, "period": enum }`
+- retry policy: an array-based policy shape following the same pattern as rate limits so future variants can be added without changing the container type
+
+The list-of-objects pattern is intentional. Even where v1 has only one practical variant, `kind` keeps room for keyed, field-based, or scoped policy variants later.
 
 The server should bind that logical function configuration to the authenticated worker session and create a live `FunctionRef` for it. Connection-scoped identity such as worker ownership or reference IDs can be added by the server rather than supplied as user-facing SDK fields.
 
