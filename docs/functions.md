@@ -6,15 +6,29 @@ A `Function` is the core unit of executable work in Spindle. Functions are regis
 
 ## Function Definition
 
-Each function registration should capture:
+Each function registration should capture one JSON-serializable configuration object:
 
-- `function_id`: the stable logical identity used across workers and executions
-- `ref_id`: the worker-scoped function reference for this live registration
-- `options`: execution metadata such as concurrency hints, timeout expectations, retry hints, tags, or routing metadata
-- `capability metadata`: the ingress or matching information that describes how events may target the function
-- `worker ownership`: the worker session currently advertising the function reference
+```json
+{
+  "id": "email.send",
+  "label": "Send email to a user",
+  "triggers": [],
+  "concurrency": [],
+  "rate_limit": [],
+  "retries": {}
+}
+```
 
-The callable implementation is local to the SDK host and does not exist inside the Spindle server.
+The core fields are:
+
+- `id`: the stable logical identity used across workers and executions
+- `label`: the operator-facing description of what the function does
+- `triggers`: the event or ingress descriptors that can target the function
+- `concurrency`: the configured concurrency rules
+- `rate_limit`: the configured rate-limit rules
+- `retries`: retry behavior and policy
+
+The callable implementation is local to the SDK host and does not exist inside the Spindle server. Worker ownership and `FunctionRef` identity are live runtime facts added by the server when the function is created on a connected worker.
 
 ## Logical Function Versus Function Reference
 
@@ -58,9 +72,12 @@ spindle.register_function(
     spindle.Queue(
         my_function,
         id="my-function",
+        label="Process inbound email",
         queue="emails",
+        triggers=[spindle.queue("emails")],
         concurrency=[spindle.Concurrency(limit=1)],
-        rate_limits=[spindle.RateLimit(key="emails", rate="10/s")],
+        rate_limit=[spindle.RateLimit(key="emails", rate="10/s")],
+        retries=spindle.Retries(max_attempts=3),
     )
 )
 
@@ -68,8 +85,10 @@ spindle.register_function(
     spindle.Http(
         my_function,
         id="http-my-function",
+        label="Handle inbound event webhook",
         method="POST",
         path="/events",
+        triggers=[spindle.http(method="POST", path="/events")],
     )
 )
 
@@ -87,7 +106,7 @@ response = await spindle.rpc(
 The exact SDK naming may change, but the model should stay consistent:
 
 - the SDK may provide ergonomic wrappers such as `Queue(...)` or `Http(...)`
-- the worker still registers a normalized `Function`
+- the worker still sends one normalized function configuration object
 - the trigger or ingress description is metadata on the function or on emitted events
 - the server should not need separate registration lifecycles for queue functions versus HTTP functions
 - event ingress should use simple verbs such as `send(...)` and `rpc(...)`
@@ -97,6 +116,7 @@ The exact SDK naming may change, but the model should stay consistent:
 The SDK can expose several ergonomic entrypoints without forcing matching server-side resource types:
 
 - `register_function(...)` advertises executable work on a live worker
+- the underlying wire command may be named `create_function`
 - `Queue(...)` and `Http(...)` are client-side constructors for function metadata
 - `send(...)` emits an event into the shared model
 - `rpc(...)` emits a request that expects a correlated response

@@ -22,7 +22,7 @@ The implementation should keep the transport simple. Protocol messages should us
 
 The design should intentionally keep only three naming layers:
 
-- SDK verbs: what application code calls, such as `send(...)`, `rpc(...)`, and `register_function(...)`
+- SDK verbs: what application code calls, such as `send(...)`, `rpc(...)`, and function registration helpers
 - wire commands: concrete websocket message structs in a `commands` package
 - internal events: concrete event-log records in an `events` package
 
@@ -42,7 +42,7 @@ The protocol should avoid a large envelope type, but each websocket frame still 
 ```json
 { "kind": "send", ... }
 { "kind": "rpc", ... }
-{ "kind": "register_function", ... }
+{ "kind": "create_function", ... }
 { "kind": "execution_request", ... }
 { "kind": "execution_update", ... }
 ```
@@ -73,7 +73,7 @@ The protocol should use a small set of concrete message categories:
 - `registered`: sent by the server to confirm accepted worker or function registration.
 - `send`: sent by the worker or capability adapter to emit an event into Spindle.
 - `rpc`: sent by the worker when it needs request/response semantics over the same transport.
-- `register_function`: sent by the worker to declare a function ID, metadata, and execution options.
+- `create_function`: sent by the worker to declare a function ID and its JSON-serializable configuration.
 - `execution_request`: sent by the server to assign an execution to a worker-held `FunctionRef`.
 - `execution_update`: sent by the worker to report accepted, running, progress, blocked, retried, deferred, completed, or failed states.
 - `ack`: positive acceptance of a command or execution request.
@@ -89,7 +89,7 @@ The websocket transport layer should live behind a `commands` package with one f
 - `commands/authenticate.go`
 - `commands/send.go`
 - `commands/rpc.go`
-- `commands/register_function.go`
+- `commands/create_function.go`
 - `commands/execution_request.go`
 - `commands/execution_update.go`
 
@@ -107,20 +107,36 @@ Worker registration should establish a durable relationship between a live conne
 
 1. Worker sends `authenticate` with worker metadata and proof derived from the shared secret.
 2. Server validates authentication and marks the session active.
-3. Worker sends `register_function` for each function it can execute.
+3. Worker sends `create_function` for each function it can execute.
 4. Server responds with `registered` acknowledgements and creates `FunctionRef` records scoped to that worker session.
 
 The server should reject registration attempts that arrive before authentication or that conflict with protocol invariants. Event emission is separate from registration and should remain available only after authentication.
 
 ## Function Shape
 
-At the protocol level, a function registration should include:
+At the protocol level, `create_function` should carry one JSON object that describes the logical function and its execution policy:
 
-- `function_id`: the stable logical ID used for dispatch and concurrency control.
-- `worker_id` or equivalent session identity: the worker claiming the registration.
-- `ref_id`: a connection-scoped identifier for this specific function reference.
-- `options`: execution metadata such as concurrency hints, retry hints, idempotency expectations, timeout expectations, tags, or routing metadata.
-- `trigger_bindings` when needed: a description of which triggers or inputs map to the function.
+```json
+{
+  "id": "email.send",
+  "label": "Send email to a user",
+  "triggers": [],
+  "concurrency": [],
+  "rate_limit": [],
+  "retries": {}
+}
+```
+
+The fields are:
+
+- `id`: the stable logical function ID used for dispatch and concurrency control
+- `label`: a human-readable description for operators and tooling
+- `triggers`: a list of trigger descriptors that describe which events may target the function
+- `concurrency`: a list of concurrency policies
+- `rate_limit`: a list of rate-limit policies
+- `retries`: retry behavior for the function
+
+The server should bind that logical function configuration to the authenticated worker session and create a live `FunctionRef` for it. Connection-scoped identity such as worker ownership or reference IDs can be added by the server rather than supplied as user-facing SDK fields.
 
 The callable itself never crosses the protocol. Spindle coordinates and dispatches work; the client SDK owns local execution of the callable and reporting of resulting state.
 
@@ -134,16 +150,49 @@ The callable itself never crosses the protocol. Spindle coordinates and dispatch
 
 This keeps the protocol small. Persistent registration is for executable functions. Ephemeral user-land signals, HTTP ingress, schedule firings, and queue deliveries should enter the system through `send` or `rpc`, depending on whether a response is required.
 
-A sent event should be able to carry:
+## `send` Shape
 
-- `event_id`: a unique identity for the ingress event
-- `trigger`: the event shape or source descriptor
-- `payload`: user data or ingress payload
-- `source`: origin metadata such as worker, queue, route, schedule, or stream partition
-- `timestamp`: creation or delivery time
-- `routing metadata`: optional tags, partition keys, tenant keys, or other dispatch hints
+From the user perspective, `send` just sends an event. The wire shape should stay small:
 
-An RPC-shaped message should use the same transport style, but add correlation data and an expected response path. The difference between `send` and `rpc` should be semantics, not a second protocol stack.
+```json
+{
+  "kind": "send",
+  "name": "emails.received",
+  "payload": {},
+  "idempotency_id": "evt_123"
+}
+```
+
+A sent event should carry:
+
+- `name`: the event name from the caller's perspective
+- `payload`: the event body
+- `idempotency_id`: an optional caller-supplied idempotency key for deduplication and safe retries
+
+The server may enrich the resulting internal event with server-generated fields such as event identity, source metadata, timestamps, and routing hints.
+
+## `rpc` Shape
+
+`rpc` also sends an event, but gives the client an opportunity to wait for a result as a promise, future, or equivalent SDK construct. It should add timeout and correlation semantics without introducing a second protocol stack.
+
+```json
+{
+  "kind": "rpc",
+  "name": "user.lookup",
+  "payload": {},
+  "idempotency_id": "rpc_123",
+  "timeout": "5s"
+}
+```
+
+An RPC command should carry:
+
+- `name`: the request name
+- `payload`: the request body
+- `idempotency_id`: an optional caller-supplied idempotency key
+- `timeout`: how long the client is willing to wait for a result
+
+The server should attach correlation data internally so the SDK can resolve the waiting promise or future when the result arrives.
 
 ## Commands Versus Internal Events
 
@@ -153,7 +202,7 @@ Suggested mapping:
 
 - `commands/send.go` decodes websocket `send` messages
 - `commands/rpc.go` decodes websocket `rpc` messages
-- `commands/register_function.go` decodes websocket function registration
+- `commands/create_function.go` decodes websocket function registration
 - `events/event.go` stores normalized ingress events in the internal log
 - `events/rpc.go` stores RPC-style internal events when request/response tracking matters
 - `events/function.go` stores function registration or function lifecycle events
