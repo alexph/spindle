@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The Spindle protocol is a websocket-first, bidirectional command and event protocol between the Spindle server and polyglot workers. A worker connects once, authenticates with a shared secret, registers its functions, receives execution requests, and reports execution state back over the same connection.
+The Spindle protocol is a websocket-first, bidirectional command and event protocol between the Spindle server and polyglot workers. A worker connects once, sends an initial `hello` with its shared secret, registers its functions, receives execution requests, and reports execution state back over the same connection.
 
 This document is a message-spec level design. It defines the lifecycle, message categories, and core payload shapes needed to build the server and SDKs without freezing every field, status code, or error taxonomy.
 
@@ -10,7 +10,7 @@ The implementation should keep the transport simple. Protocol messages should us
 
 ## Core Entities
 
-- `Worker`: a connected process that authenticates, registers functions, emits events, and executes work locally through an SDK.
+- `Worker`: a connected process that authenticates through an initial `hello`, registers functions, emits events, and executes work locally through an SDK.
 - `Function`: a named unit of work identified by a stable function ID and associated options.
 - `Trigger`: a structured description of an input source or event shape that can create internal events.
 - `Command`: an instruction sent over the websocket that asks the peer to perform or acknowledge an action.
@@ -33,8 +33,10 @@ These layers should map directly to each other without introducing extra service
 
 - Transport is websocket for all worker/server runtime communication.
 - Both the server and workers are configured with the same secure secret key.
-- Authentication happens at connection start before capability registration is accepted.
+- Authentication happens immediately after connection start, before capability registration is accepted.
 - Registration traffic and execution traffic share the same websocket session.
+
+V1 should not assume every platform can reliably attach custom upgrade headers during websocket connection setup. The recommended direction is an initial `hello` message sent over the websocket after the connection is established.
 
 ## Wire Shape
 
@@ -59,7 +61,7 @@ The protocol should not require a separate envelope object beyond this discrimin
 ## Connection Lifecycle
 
 1. A worker opens a websocket connection to the Spindle server.
-2. The worker authenticates with the shared secret and worker metadata.
+2. The worker sends `hello` with the shared secret and optional worker metadata.
 3. The server accepts the session and creates a live `Worker` record in the registry.
 4. The worker registers one or more `Function` definitions, creating worker-owned `FunctionRef` records.
 5. The server dispatches eligible executions to matching workers over the same connection.
@@ -70,7 +72,7 @@ The protocol should not require a separate envelope object beyond this discrimin
 
 The protocol should use a small set of concrete message categories:
 
-- `authenticate`: sent by the worker to prove possession of the shared secret and describe the worker.
+- `hello`: sent first by the worker to prove possession of the shared secret and describe the worker.
 - `registered`: sent by the server to confirm accepted worker or function registration.
 - `send`: sent by the worker or capability adapter to emit an event into Spindle.
 - `rpc`: sent by the worker when it needs request/response semantics over the same transport.
@@ -87,7 +89,7 @@ Exact message names should stay close to these concrete names unless a strong im
 
 The websocket transport layer should live behind a `commands` package with one file per concrete message shape. The intended direction is:
 
-- `commands/authenticate.go`
+- `commands/hello.go`
 - `commands/send.go`
 - `commands/rpc.go`
 - `commands/create_function.go`
@@ -106,12 +108,28 @@ These files should not become mini subsystems. They exist to keep transport code
 
 Worker registration should establish a durable relationship between a live connection and the capabilities it owns:
 
-1. Worker sends `authenticate` with worker metadata and proof derived from the shared secret.
+1. Worker sends `hello` with the shared secret and optional worker metadata.
 2. Server validates authentication and marks the session active.
 3. Worker sends `create_function` for each function it can execute.
 4. Server responds with `registered` acknowledgements and creates `FunctionRef` records scoped to that worker session.
 
 The server should reject registration attempts that arrive before authentication or that conflict with protocol invariants. Event emission is separate from registration and should remain available only after authentication.
+
+For v1, the auth handshake should be a simple initial hello message after websocket connect, for example:
+
+```json
+{
+  "kind": "hello",
+  "auth": "extra secret key"
+}
+```
+
+The exact message may later carry worker metadata, protocol version, or capability hints, but the main rule is simple:
+
+- connect websocket
+- send `hello`
+- wait for acceptance
+- only then send `create_function`, `send`, or `rpc`
 
 ## Function Shape
 

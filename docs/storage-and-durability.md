@@ -190,8 +190,7 @@ Conceptually, a chunk looks like:
 {
   "chunk_type": "progress",
   "payload": {
-    "message": "processing item 42",
-    "percent": 50
+    "id": "run_123"
   }
 }
 ```
@@ -210,26 +209,23 @@ Every meaningful transition should append a new chunk rather than mutate a row i
 
 Derived current state can still be cached on `runs.status` for fast dispatch and queries, but the source of truth should be append-only chunks.
 
-This keeps the model flexible:
-
-- `progress` can carry arbitrary progress metadata
-- `output` can carry return values or RPC results
-- `failed` can carry error details
-- `deferred` and `retry_scheduled` can carry scheduling hints
+This keeps the model flexible. V1 can start with very small payloads and grow later.
 
 Fields should only be promoted out of `payload_json` into first-class columns when the server needs to query them frequently for dispatch or recovery.
 
 Suggested v1 payload expectations:
 
-- `created`: the normalized creation snapshot for the run
-- `accepted`: which worker or function reference accepted the work
-- `started`: the start snapshot for local execution
-- `progress`: arbitrary progress metadata
-- `output`: returned values or RPC results
-- `deferred`: delay or defer metadata
-- `retry_scheduled`: retry scheduling metadata
-- `completed`: terminal success metadata
-- `failed`: terminal failure metadata
+- `created`: `{ "id": "..." }`
+- `accepted`: `{ "id": "..." }`
+- `started`: `{ "id": "..." }`
+- `progress`: `{ "id": "..." }`
+- `output`: `{ "id": "..." }`
+- `deferred`: `{ "id": "..." }`
+- `retry_scheduled`: `{ "id": "..." }`
+- `completed`: `{ "id": "..." }`
+- `failed`: `{ "id": "..." }`
+
+This is intentionally minimal. The durable model only needs the event name and a stable payload slot in v1; richer chunk payloads can be added once the engine loop is concrete.
 
 ## `worker_sessions` And `leases`
 
