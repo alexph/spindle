@@ -30,6 +30,14 @@ Spindle should be described as a small set of cooperating runtime modules rather
 - `execution state tracker`: keeps the current durable state of each execution and interprets worker responses such as ack, nack, retry, and defer.
 - `durability/storage`: persists the event log and the minimum state needed to recover after restart.
 
+To keep layers small, the implementation should separate only:
+
+- `commands/*` for websocket message structs and readers/writers
+- `events/*` for concrete internal event-log records
+- core runtime modules that consume those types directly
+
+This avoids inflating the codebase with extra service or repository layers.
+
 ## Project Layout Direction
 
 The codebase should optimize for shared primitives and small internal seams:
@@ -38,12 +46,13 @@ The codebase should optimize for shared primitives and small internal seams:
 - Put each capability behind a narrow adapter module that emits shared internal events.
 - Avoid per-capability runtimes, schedulers, or dispatch loops unless a concrete requirement forces it.
 - Reuse the same nouns everywhere: `Worker`, `Function`, `Trigger`, `Command`, `Event`, `Execution`, and `FunctionRef`.
+- Prefer one file per concrete wire or event shape over abstract handler hierarchies.
 
 The result should feel like one execution engine with many inputs, not many products in one repository.
 
 ## High-Level Flow
 
-1. An external capability adapter or worker-originated trigger produces an internal event.
+1. An external capability adapter or worker-originated `send` or `rpc` command produces an internal event.
 2. The event is appended to the ordered event log.
 3. The dispatcher evaluates that event against function registrations, workflow state, concurrency limits, and rate limits.
 4. If work is eligible, the dispatcher assigns an execution to an available worker that holds a matching `FunctionRef`.
@@ -55,3 +64,4 @@ The result should feel like one execution engine with many inputs, not many prod
 - The architecture commits to an ordered internal event log, but not yet to a specific storage engine.
 - Capability modules may have local logic, but they must not introduce a second execution model.
 - The first implementation should prefer explicit simple modules over deep package trees or abstract plugin systems.
+- Concrete types should carry most of the meaning; avoid a convention that forces every operation into a `SomethingCommand` name.

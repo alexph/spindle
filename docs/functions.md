@@ -55,30 +55,57 @@ async def my_function(ctx):
 
 
 spindle.register_function(
-    spindle.function(
+    spindle.Queue(
         my_function,
         id="my-function",
-        trigger=spindle.queue("emails"),
-        concurrency=[spindle.concurrency(limit=1)],
-        rate_limits=[spindle.rate_limit(key="emails", rate="10/s")],
+        queue="emails",
+        concurrency=[spindle.Concurrency(limit=1)],
+        rate_limits=[spindle.RateLimit(key="emails", rate="10/s")],
     )
 )
 
 spindle.register_function(
-    spindle.function(
+    spindle.Http(
         my_function,
         id="http-my-function",
-        trigger=spindle.http(method="POST", path="/events"),
+        method="POST",
+        path="/events",
     )
+)
+
+spindle.send(
+    "emails.received",
+    payload={"message_id": "msg_123"},
+)
+
+response = await spindle.rpc(
+    "user.lookup",
+    payload={"user_id": "usr_123"},
 )
 ```
 
 The exact SDK naming may change, but the model should stay consistent:
 
-- the SDK may provide ergonomic wrappers such as queue or HTTP helpers
+- the SDK may provide ergonomic wrappers such as `Queue(...)` or `Http(...)`
 - the worker still registers a normalized `Function`
 - the trigger or ingress description is metadata on the function or on emitted events
 - the server should not need separate registration lifecycles for queue functions versus HTTP functions
+- event ingress should use simple verbs such as `send(...)` and `rpc(...)`
+
+## Server Normalization
+
+The SDK can expose several ergonomic entrypoints without forcing matching server-side resource types:
+
+- `register_function(...)` advertises executable work on a live worker
+- `Queue(...)` and `Http(...)` are client-side constructors for function metadata
+- `send(...)` emits an event into the shared model
+- `rpc(...)` emits a request that expects a correlated response
+
+Inside the server, these should collapse into a small normalized model:
+
+- function registration becomes a `Function` plus a live `FunctionRef`
+- `send` and `rpc` become concrete internal events
+- dispatch, concurrency, and durability operate on normalized records rather than capability-specific code paths
 
 ## Function Placement
 

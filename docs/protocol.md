@@ -6,6 +6,8 @@ The Spindle protocol is a websocket-first, bidirectional command and event proto
 
 This document is a message-spec level design. It defines the lifecycle, message categories, and core payload shapes needed to build the server and SDKs without freezing every field, status code, or error taxonomy.
 
+The implementation should keep the transport simple. Protocol messages should use normal Go structs with JSON annotations and a minimal discriminator field rather than a heavy generic envelope abstraction.
+
 ## Core Entities
 
 - `Worker`: a connected process that authenticates, registers functions, emits events, and executes work locally through an SDK.
@@ -16,12 +18,42 @@ This document is a message-spec level design. It defines the lifecycle, message 
 - `Execution`: a single dispatch instance for a function or workflow step.
 - `FunctionRef`: the binding between a connected worker session and a registered function definition.
 
+## Naming Layers
+
+The design should intentionally keep only three naming layers:
+
+- SDK verbs: what application code calls, such as `send(...)`, `rpc(...)`, and `register_function(...)`
+- wire commands: concrete websocket message structs in a `commands` package
+- internal events: concrete event-log records in an `events` package
+
+These layers should map directly to each other without introducing extra service or repository abstractions.
+
 ## Transport And Security
 
 - Transport is websocket for all worker/server runtime communication.
 - Both the server and workers are configured with the same secure secret key.
 - Authentication happens at connection start before capability registration is accepted.
 - Registration traffic and execution traffic share the same websocket session.
+
+## Wire Shape
+
+The protocol should avoid a large envelope type, but each websocket frame still needs a minimal discriminator so the reader can select the correct concrete Go struct. The expected shape is:
+
+```json
+{ "kind": "send", ... }
+{ "kind": "rpc", ... }
+{ "kind": "register_function", ... }
+{ "kind": "execution_request", ... }
+{ "kind": "execution_update", ... }
+```
+
+This is enough to keep the transport simple:
+
+- each message is a normal Go struct with JSON tags
+- `kind` identifies which reader or writer should decode it
+- the rest of the payload is the concrete message body for that kind
+
+The protocol should not require a separate envelope object beyond this discriminator unless a later requirement forces it.
 
 ## Connection Lifecycle
 
@@ -35,19 +67,39 @@ This document is a message-spec level design. It defines the lifecycle, message 
 
 ## Message Categories
 
-The protocol should use a small set of message categories:
+The protocol should use a small set of concrete message categories:
 
 - `authenticate`: sent by the worker to prove possession of the shared secret and describe the worker.
 - `registered`: sent by the server to confirm accepted worker or function registration.
+- `send`: sent by the worker or capability adapter to emit an event into Spindle.
+- `rpc`: sent by the worker when it needs request/response semantics over the same transport.
 - `register_function`: sent by the worker to declare a function ID, metadata, and execution options.
-- `emit_event`: sent by the worker or capability adapter to submit an ephemeral event into the shared model.
 - `execution_request`: sent by the server to assign an execution to a worker-held `FunctionRef`.
 - `execution_update`: sent by the worker to report accepted, running, progress, blocked, retried, deferred, completed, or failed states.
 - `ack`: positive acceptance of a command or execution request.
 - `nack`: explicit refusal or failure to accept a command or execution request.
 - `disconnect_notice`: optional terminal message to support graceful cleanup.
 
-Exact message names may change in implementation, but the protocol must preserve these roles.
+Exact message names should stay close to these concrete names unless a strong implementation reason appears.
+
+## Commands Package Shape
+
+The websocket transport layer should live behind a `commands` package with one file per concrete message shape. The intended direction is:
+
+- `commands/authenticate.go`
+- `commands/send.go`
+- `commands/rpc.go`
+- `commands/register_function.go`
+- `commands/execution_request.go`
+- `commands/execution_update.go`
+
+Each file should stay mechanical and small:
+
+- `Something` struct for the concrete JSON shape
+- `SomethingReader` for decode and basic shape validation
+- `SomethingWriter` for encode and write
+
+These files should not become mini subsystems. They exist to keep transport code concrete and avoid generic protocol machinery.
 
 ## Worker Registration Flow
 
@@ -80,9 +132,9 @@ The callable itself never crosses the protocol. Spindle coordinates and dispatch
 - a trigger may appear as metadata on a function definition or inside an emitted event payload
 - a trigger does not create worker-owned lifecycle state unless a future capability requires durable subscriptions
 
-This keeps the protocol small. Persistent registration is for executable functions. Ephemeral user-land signals, HTTP ingress, schedule firings, and queue deliveries should enter the system as emitted events.
+This keeps the protocol small. Persistent registration is for executable functions. Ephemeral user-land signals, HTTP ingress, schedule firings, and queue deliveries should enter the system through `send` or `rpc`, depending on whether a response is required.
 
-An emitted event should be able to carry:
+A sent event should be able to carry:
 
 - `event_id`: a unique identity for the ingress event
 - `trigger`: the event shape or source descriptor
@@ -91,11 +143,28 @@ An emitted event should be able to carry:
 - `timestamp`: creation or delivery time
 - `routing metadata`: optional tags, partition keys, tenant keys, or other dispatch hints
 
+An RPC-shaped message should use the same transport style, but add correlation data and an expected response path. The difference between `send` and `rpc` should be semantics, not a second protocol stack.
+
+## Commands Versus Internal Events
+
+Wire commands and internal events should not be the same package or the same type, even when their names are similar.
+
+Suggested mapping:
+
+- `commands/send.go` decodes websocket `send` messages
+- `commands/rpc.go` decodes websocket `rpc` messages
+- `commands/register_function.go` decodes websocket function registration
+- `events/event.go` stores normalized ingress events in the internal log
+- `events/rpc.go` stores RPC-style internal events when request/response tracking matters
+- `events/function.go` stores function registration or function lifecycle events
+
+The internal `events` package should represent facts in the server loop and event log. The `commands` package should represent frames crossing the websocket.
+
 ## Execution Flow
 
 The core dispatch loop should look like this:
 
-1. A capability adapter, worker-originated event, or workflow transition appends an internal event.
+1. A capability adapter, worker-originated `send` or `rpc`, or workflow transition produces an internal event.
 2. The dispatcher resolves that event to one or more eligible `Function` targets.
 3. The dispatcher selects an available `FunctionRef` while enforcing concurrency and rate limits.
 4. The server sends `execution_request` to the chosen worker connection.
@@ -134,3 +203,4 @@ Workers are expected to connect and disconnect over time. The protocol must supp
 - Whether protocol frames are JSON-only or support a second encoding remains open.
 - Workflow-specific protocol extensions should be added only if the shared execution model proves insufficient.
 - Trigger metadata shape remains open, but trigger lifecycle should stay ephemeral unless a later requirement proves otherwise.
+- The final internal event file split may evolve, but the design should preserve the `commands/*` versus `events/*` distinction.
