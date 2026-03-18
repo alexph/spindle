@@ -4,6 +4,8 @@
 
 This document proposes a concrete starting SQLite schema for Spindle v1. It is intentionally narrow and derived from the design docs, not from implementation constraints that do not exist yet.
 
+Use this document as the conceptual schema overview. For the concrete first-cut DDL, use [first-migration.md](/Users/alex/Projects/spindle/docs/first-migration.md).
+
 The target environment is:
 
 - SQLite
@@ -27,6 +29,23 @@ SQLite types should stay simple in v1:
 - use `TEXT` for IDs, enums, hashes, durations, and JSON blobs
 - use `INTEGER` for counters, positions, boolean flags, and unix timestamps
 - keep JSON as text payloads instead of attempting deep relational decomposition too early
+
+## Recommended V1 Default
+
+The simplest recommended v1 schema is:
+
+- `functions`
+- `function_versions`
+- `worker_sessions`
+- `runs`
+- `run_chunks`
+
+Optional tables that can be deferred:
+
+- `function_refs`
+- `leases`
+
+This keeps the first implementation aligned with the current connection-derived liveness model and avoids persisting bookkeeping that may still be easier to keep in memory.
 
 ## `functions`
 
@@ -109,7 +128,7 @@ Notes:
 
 ## `function_refs`
 
-Even though `FunctionRef` is connection-derived, a concrete table is still useful if the implementation wants restart visibility or explicit cleanup bookkeeping.
+`FunctionRef` is connection-derived in v1, so this table should be treated as optional. It is useful only if the implementation wants explicit restart visibility or durable cleanup bookkeeping early.
 
 ```sql
 CREATE TABLE function_refs (
@@ -138,8 +157,8 @@ CREATE INDEX function_refs_worker_session_id_idx
 
 Notes:
 
-- if this table feels too heavy in implementation, it can be deferred
-- the docs include it because `FunctionRef` is already a core noun in the protocol and worker model
+- recommended default: defer this table in v1
+- include it only if the implementation genuinely benefits from persisting live registration bookkeeping
 
 ## `runs`
 
@@ -252,12 +271,9 @@ Notes:
 - append chunks and update `runs.status` / `runs.updated_at` in one transaction
 - treat `run_chunks` as the durable source of truth and `runs.status` as an optimization
 
-## First Migration Order
+## Relationship To First Migration
 
-Recommended first migration order:
-
-1. `functions`
-2. `function_versions`
+[first-migration.md](/Users/alex/Projects/spindle/docs/first-migration.md) should be treated as the implementation-oriented default. This document exists to explain the durable model and optional tables without forcing every possible table into the first migration.
 3. `worker_sessions`
 4. `function_refs`
 5. `runs`
