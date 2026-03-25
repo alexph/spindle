@@ -1,0 +1,112 @@
+syntax = "proto3";
+
+package spindle;
+
+option go_package = "github.com/alexph/spindle/internal/gen/spindlepb;spindlepb";
+
+// ------------------------------------------------------------
+// Top-level service
+// ------------------------------------------------------------
+service Spindle {
+  // Producers push events into the system.
+  rpc SendEvent(SendEventRequest) returns (SendEventResponse);
+
+  // Workers register function definitions, then open a
+  // bidirectional stream to receive work and report results.
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+  rpc Connect(stream WorkerMessage) returns (stream ServerMessage);
+}
+
+// ------------------------------------------------------------
+// Events
+// ------------------------------------------------------------
+message SendEventRequest {
+  string event_name = 1;
+  bytes  data       = 2; // JSON payload
+  string idempotency_key = 3; // optional dedup
+}
+
+message SendEventResponse {
+  string event_id = 1;
+}
+
+// ------------------------------------------------------------
+// Function registration
+// ------------------------------------------------------------
+message RegisterRequest {
+  string           worker_id = 1;
+  repeated FnDef   functions = 2;
+}
+
+message RegisterResponse {
+  bool ok = 1;
+}
+
+message FnDef {
+  string               fn_id       = 1;
+  Trigger              trigger     = 2;
+  repeated Concurrency concurrency = 3;
+  repeated RateLimit   rate_limit  = 4;
+  RetryPolicy          retries     = 5;
+}
+
+message Trigger {
+  string event = 1; // e.g. "order/created"
+}
+
+message Concurrency {
+  int32  limit = 1;
+  string key   = 2; // CEL or dotpath into event data, e.g. "data.customer_id"
+}
+
+message RateLimit {
+  int32  limit  = 1;
+  string period = 2; // "1s", "1m", "1h"
+  string key    = 3; // optional
+}
+
+message RetryPolicy {
+  int32  max_attempts    = 1; // 0 = no retries
+  string initial_backoff = 2; // e.g. "1s"
+  double backoff_multiplier = 3;
+}
+
+// ------------------------------------------------------------
+// Worker ↔ Server bidirectional stream
+// ------------------------------------------------------------
+message WorkerMessage {
+  oneof msg {
+    WorkerReady   ready   = 1;
+    ExecutionAck  ack     = 2;
+  }
+}
+
+// Sent once when the stream opens. Identifies the worker and
+// how many concurrent executions it can handle.
+message WorkerReady {
+  string worker_id  = 1;
+  int32  capacity   = 2; // max concurrent items this worker wants
+}
+
+// Sent after a function execution completes.
+message ExecutionAck {
+  string lease_id = 1;
+  bool   success  = 2;
+  string error    = 3; // set on failure
+}
+
+message ServerMessage {
+  oneof msg {
+    ExecutionRequest exec = 1;
+  }
+}
+
+// Server tells a worker to execute a function.
+message ExecutionRequest {
+  string lease_id   = 1;
+  string fn_id      = 2;
+  string event_id   = 3;
+  string event_name = 4;
+  bytes  data       = 5;
+  int32  attempt    = 6; // starts at 1
+}
